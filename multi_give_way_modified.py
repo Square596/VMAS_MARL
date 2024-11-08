@@ -31,9 +31,9 @@ class Scenario(BaseScenario):
     min_collision_distance: float = 0.005
         minimal distance between agents without penalties
     scenario_length: int|float = 5
-        length of the hall/tunnel of each agent
+        length of the tunnel of each agent
     scenario_width: int|float = 0.4
-        width of the hall/tunnel of each agent
+        width of the tunnel of each agent
     goal_dist_from_wall: int|float = agent_radius + 0.05
     agent_dist_from_wall: int|float = 0.5
 
@@ -80,7 +80,7 @@ class Scenario(BaseScenario):
         self.min_input_norm = kwargs.pop("min_input_norm", 0.08)
         self.comms_range = kwargs.pop("comms_range", 5)
         self.shared_rew = kwargs.pop("shared_rew", True)
-        self.n_agents = kwargs.pop("n_agents", 4)
+        # self.n_agents = kwargs.pop("n_agents", 4)
 
         self.pos_shaping_factor = kwargs.pop("pos_shaping_factor", 1)  # max is 8
         self.final_reward = kwargs.pop("final_reward", 0.01)
@@ -96,7 +96,16 @@ class Scenario(BaseScenario):
 
         controller_params = [2, 6, 0.002]
 
-        self.n_agents = 4
+        # modified
+        self.n_tunnels = kwargs.get("n_tunnels", 4)
+        assert self.n_tunnels == 4, "n_tunnels != 4 is not implemented yet"
+
+        self.n_agents = kwargs.get("n_agents", [2 for _ in range(self.n_tunnels)])
+        if isinstance(self.n_agents, int):
+            self.n_agents = [self.n_agents for _ in range(self.n_tunnels)]
+        elif not isinstance(self.n_agents, list) and len(self.n_agents) != self.n_tunnels:
+            raise ValueError(f"n_agents must be int or List[int] with the size = n_tunnels, received {self.n_agents} and n_tunnels={self.n_tunnels}")
+        
         self.f_range = self.a_range + self.linear_friction
 
         # Make world
@@ -116,41 +125,47 @@ class Scenario(BaseScenario):
 
         self.min_collision_distance = 0.005
 
-        self.colors = [Color.GREEN, Color.BLUE, Color.RED, Color.GRAY]
+        self.colors = [Color.GREEN, Color.BLUE, Color.RED, Color.GRAY] # need modification
 
         # Add agents
-        for i in range(self.n_agents):
-            agent = Agent(
-                name=f"agent_{i}",
-                rotatable=False,
-                linear_friction=self.linear_friction,
-                shape=(
-                    Sphere(radius=self.agent_radius)
-                    if not self.box_agents
-                    else Box(length=self.agent_box_length, width=self.agent_box_width)
-                ),
-                u_range=self.u_range,
-                f_range=self.f_range,
-                render_action=True,
-                color=self.colors[i],
-            )
-            agent.controller = VelocityController(
-                agent, world, controller_params, "standard"
-            )
-            goal = Landmark(
-                name=f"goal {i}",
-                collide=False,
-                shape=Sphere(radius=self.agent_radius / 2),
-                color=self.colors[i],
-            )
-            agent.goal = goal
-            agent.pos_rew = torch.zeros(batch_dim, device=device)
-            agent.agent_collision_rew = agent.pos_rew.clone()
-            world.add_agent(agent)
-            world.add_landmark(goal)
+        for tunnel_id in range(self.n_tunnels):
+            for agent_id in range(self.n_agents[tunnel_id]):
+                agent = Agent(
+                    name=f"agent{tunnel_id}_{agent_id}",
+                    rotatable=False,
+                    linear_friction=self.linear_friction,
+                    shape=(
+                        Sphere(radius=self.agent_radius)
+                        if not self.box_agents
+                        else Box(length=self.agent_box_length, width=self.agent_box_width)
+                    ),
+                    u_range=self.u_range,
+                    f_range=self.f_range,
+                    render_action=True,
+                    color=self.colors[tunnel_id],
+                )
+                agent.controller = VelocityController(
+                    agent, world, controller_params, "standard"
+                )
+                goal = Landmark(
+                    name=f"goal{tunnel_id}_{agent_id}",
+                    collide=False,
+                    shape=Sphere(radius=self.agent_radius / 2),
+                    color=self.colors[tunnel_id],
+                )
+                agent.goal = goal
+                agent.pos_rew = torch.zeros(batch_dim, device=device)
+                agent.agent_collision_rew = agent.pos_rew.clone()
+                world.add_agent(agent)
+                world.add_landmark(goal)
 
         # modification
-        self.scenario_length = kwargs.get("scenario_length", 5)
+        self.center_lengths = kwargs.get("center_lengths", [2 for _ in range(self.n_tunnels)])
+        if isinstance(self.center_lengths, int):
+            self.center_lengths = [self.center_lengths for _ in range(self.n_tunnels)]
+        elif not isinstance(self.center_lengths, list) and len(self.center_lengths) != self.n_tunnels:
+            raise ValueError(f"center_lengths must be int or List[int] with the size = n_tunnels, received {self.center_lengths} and n_tunnels={self.n_tunnels}")
+
         self.scenario_width = kwargs.get("scenario_width", 0.4)
         self.scenario_angle = kwargs.get("scenario_angle", torch.pi / 3)
 
@@ -161,60 +176,79 @@ class Scenario(BaseScenario):
 
         return world
 
+    def spawn_map(self, world: World):
+
+        self.long_walls = [[] for _ in range(self.n_tunnels)]
+        self.short_walls = []
+        for tunnel_id in range(self.n_tunnels):
+            tunnel_length = self.center_lengths[tunnel_id] + self.scenario_width * self.n_agents[tunnel_id]
+
+            # 2 long walls
+            for wall_id in range(2):
+                long_wall = Landmark(
+                    name=f"long-wall{tunnel_id}_{wall_id}",
+                    collide=True,
+                    shape=Line(length=tunnel_length),
+                    color=Color.BLACK,
+                )
+
+                world.add_landmark(long_wall)
+                self.long_walls[tunnel_id].append(long_wall)
+            
+            # 1 short wall
+            short_wall = Landmark(
+                name=f"short-wall{tunnel_id}",
+                collide=True,
+                shape=Line(length=self.scenario_width),
+                color=Color.BLACK,
+            )
+
+            world.add_landmark(short_wall)
+            self.short_walls.append(short_wall)
+
     def reset_world_at(self, env_index: int = None):
         scenario_angle = torch.tensor(self.scenario_angle, dtype=torch.float32, device=self.world.device)
         sin_angle = torch.sin(scenario_angle)
         cos_angle = torch.cos(scenario_angle)
 
-        base_x_agent_pos = torch.tensor(
-            [
-                - (self.scenario_length / 2 - self.agent_dist_from_wall), # agent_0
-                0,                                                        # agent_1
-                self.scenario_length / 2 - self.agent_dist_from_wall,     # agent_2
-                0,                                                        # agent_3
-            ],
-            dtype=torch.float32,
-            device=self.world.device,
-        )
-        base_y_agent_pos = torch.tensor(
-            [
-                0,                                                        # agent_0
-                self.scenario_length / 2 - self.agent_dist_from_wall,     # agent_1
-                0,                                                        # agent_2
-                - (self.scenario_length / 2 - self.agent_dist_from_wall), # agent_3
-            ],
-            dtype=torch.float32,
-            device=self.world.device,
-        )
-        base_x_goal_pos = torch.tensor(
-            [
-                0,                                                       # agent_0
-                - (self.scenario_length / 2 - self.goal_dist_from_wall), # agent_1
-                0,                                                       # agent_2
-                self.scenario_length / 2 - self.goal_dist_from_wall,     # agent_3
-            ],
-            dtype=torch.float32,
-            device=self.world.device,
-        )
-        base_y_goal_pos = torch.tensor(
-            [
-                - (self.scenario_length / 2 - self.goal_dist_from_wall), # agent_0
-                0,                                                        # agent_1
-                self.scenario_length / 2 - self.goal_dist_from_wall,      # agent_2
-                0,                                                        # agent_3
-            ],
-            dtype=torch.float32,
-            device=self.world.device,
-        )
-        for base_x, base_y, base_x_goal, base_y_goal, agent in zip(base_x_agent_pos, base_y_agent_pos, base_x_goal_pos, base_y_goal_pos, self.world.agents):
-            x = base_x * cos_angle - base_y * sin_angle
-            y = base_x * sin_angle + base_y * cos_angle
-            agent.set_pos(torch.Tensor((x, y)), batch_index=env_index)
+        for tunnel_id in range(self.n_tunnels):
+            for agent_id in range(self.n_agents[tunnel_id]):
+                agent = self.world.agents[tunnel_id * self.n_agents[tunnel_id] + agent_id]
+                if tunnel_id == 0:
+                    base_x = self.center_lengths[tunnel_id] + (agent_id + 1) * self.scenario_width
+                    base_y = 0
 
-            x_goal = base_x_goal * cos_angle - base_y_goal * sin_angle
-            y_goal = base_x_goal * sin_angle + base_y_goal * cos_angle
+                    base_x_goal = 0
+                    base_y_goal = self.center_lengths[tunnel_id] + (agent_id + 1) * self.scenario_width
 
-            agent.goal.set_pos(torch.Tensor((x_goal, y_goal)), batch_index=env_index)
+                elif tunnel_id == 1:
+                    base_x = 0
+                    base_y = self.center_lengths[tunnel_id] + (agent_id + 1) * self.scenario_width
+
+                    base_x_goal = - (self.center_lengths[tunnel_id] + (agent_id + 1) * self.scenario_width)
+                    base_y_goal = 0
+
+                elif tunnel_id == 2:
+                    base_x = - (self.center_lengths[tunnel_id] + (agent_id + 1) * self.scenario_width)
+                    base_y = 0
+
+                    base_x_goal = 0
+                    base_y_goal = - (self.center_lengths[tunnel_id] + (agent_id + 1) * self.scenario_width)
+
+                elif tunnel_id == 3:
+                    base_x = 0
+                    base_y = - (self.center_lengths[tunnel_id] + (agent_id + 1) * self.scenario_width)
+
+                    base_x_goal = self.center_lengths[tunnel_id] + (agent_id + 1) * self.scenario_width
+                    base_y_goal = 0
+                
+                x = base_x * cos_angle - base_y * sin_angle
+                y = base_x * sin_angle + base_y * cos_angle
+                agent.set_pos(torch.Tensor((x, y)), batch_index=env_index)
+
+                x_goal = base_x_goal * cos_angle - base_y_goal * sin_angle
+                y_goal = base_x_goal * sin_angle + base_y_goal * cos_angle
+                agent.goal.set_pos(torch.Tensor((x_goal, y_goal)), batch_index=env_index)
 
         for agent in self.world.agents:
             if env_index is None:
@@ -240,6 +274,70 @@ class Scenario(BaseScenario):
             )
         else:
             self.reached_goal[env_index] = False
+
+    def reset_map(self, env_index):
+        scenario_angle = torch.tensor(self.scenario_angle, dtype=torch.float32, device=self.world.device)
+        sin_angle = torch.sin(scenario_angle)
+        cos_angle = torch.cos(scenario_angle)
+
+        for tunnel_id in range(self.n_tunnels):
+            # 2 long walls
+            for long_wall_id, landmark in enumerate(self.long_walls[tunnel_id]):
+                if tunnel_id == 0:
+                    base_x = self.scenario_width / 2 + self.center_lengths[tunnel_id] / 2 + self.n_agents[tunnel_id] * self.scenario_width / 2
+                    base_y = self.scenario_width / 2 * (-1 if long_wall_id == 0 else 1)
+                    base_angle = 0
+
+                elif tunnel_id == 1:
+                    base_x = self.scenario_width / 2 * (1 if long_wall_id == 0 else -1)
+                    base_y = self.scenario_width / 2 + self.center_lengths[tunnel_id] / 2 + self.n_agents[tunnel_id] * self.scenario_width / 2
+                    base_angle = torch.pi / 2
+
+                elif tunnel_id == 2:
+                    base_x = - (self.scenario_width / 2 + self.center_lengths[tunnel_id] / 2 + self.n_agents[tunnel_id] * self.scenario_width / 2)
+                    base_y = self.scenario_width / 2 * (1 if long_wall_id == 0 else -1)
+                    base_angle = 0
+
+                elif tunnel_id == 3:
+                    base_x = self.scenario_width / 2 * (-1 if long_wall_id == 0 else 1)
+                    base_y = - (self.scenario_width / 2 + self.center_lengths[tunnel_id] / 2 + self.n_agents[tunnel_id] * self.scenario_width / 2)
+                    base_angle = torch.pi / 2
+                
+                x = base_x * cos_angle - base_y * sin_angle
+                y = base_x * sin_angle + base_y * cos_angle
+                angle = base_angle + scenario_angle
+
+                landmark.set_pos(torch.Tensor((x, y)), batch_index=env_index)
+                landmark.set_rot(angle, batch_index=env_index)
+
+            # 1 short wall
+            landmark = self.short_walls[tunnel_id]
+            if tunnel_id == 0:
+                base_x = self.scenario_width / 2 + self.center_lengths[tunnel_id] + self.n_agents[tunnel_id] * self.scenario_width
+                base_y = 0
+                base_angle = torch.pi / 2
+
+            elif tunnel_id == 1:
+                base_x = 0
+                base_y = self.scenario_width / 2 + self.center_lengths[tunnel_id] + self.n_agents[tunnel_id] * self.scenario_width
+                base_angle = 0
+            
+            elif tunnel_id == 2:
+                base_x = - (self.scenario_width / 2 + self.center_lengths[tunnel_id] + self.n_agents[tunnel_id] * self.scenario_width)
+                base_y = 0
+                base_angle = torch.pi / 2
+            
+            elif tunnel_id == 3:
+                base_x = 0
+                base_y = - (self.scenario_width / 2 + self.center_lengths[tunnel_id] + self.n_agents[tunnel_id] * self.scenario_width)
+                base_angle = 0
+            
+            x = base_x * cos_angle - base_y * sin_angle
+            y = base_x * sin_angle + base_y * cos_angle
+            angle = base_angle + scenario_angle
+
+            landmark.set_pos(torch.Tensor((x, y)), batch_index=env_index)
+            landmark.set_rot(angle, batch_index=env_index)
 
     def process_action(self, agent: Agent):
         # Clamp square to circle
@@ -385,143 +483,6 @@ class Scenario(BaseScenario):
                     geoms.append(line)
 
         return geoms
-
-    def spawn_map(self, world: World):
-        self.long_wall_length = (self.scenario_length / 2) - (self.scenario_width / 2)
-        self.short_wall_length = self.scenario_width
-        self.goal_dist_from_wall = self.agent_radius + 0.05
-        self.agent_dist_from_wall = 0.5
-
-        self.long_walls = []
-        for i in range(8):
-            landmark = Landmark(
-                name=f"wall {i}",
-                collide=True,
-                shape=Line(length=self.long_wall_length),
-                color=Color.BLACK,
-            )
-            self.long_walls.append(landmark)
-            world.add_landmark(landmark)
-
-        self.short_walls = []
-        for i in range(4):
-            landmark = Landmark(
-                name=f"short wall {i}",
-                collide=True,
-                shape=Line(length=self.short_wall_length),
-                color=Color.BLACK,
-            )
-            self.short_walls.append(landmark)
-            world.add_landmark(landmark)
-
-    def reset_map(self, env_index):
-        scenario_angle = torch.tensor(self.scenario_angle, dtype=torch.float32, device=self.world.device)
-        sin_angle = torch.sin(scenario_angle)
-        cos_angle = torch.cos(scenario_angle)
-
-        base_x_short_wall_pos = torch.tensor(
-            [
-                self.scenario_length / 2, 
-                0, 
-                -self.scenario_length / 2, 
-                0
-            ],
-            dtype=torch.float32,
-            device=self.world.device,
-        )
-
-        base_y_short_wall_pos = torch.tensor(
-            [
-                0, 
-                self.scenario_length / 2, 
-                0, 
-                -self.scenario_length / 2
-            ],
-            dtype=torch.float32,
-            device=self.world.device,
-        )
-
-        base_angle_short_wall = torch.tensor(
-            [
-                torch.pi / 2, 
-                0, 
-                torch.pi / 2, 
-                0
-            ],
-            dtype=torch.float32,
-            device=self.world.device,
-        )
-
-        for base_x, base_y, base_angle, landmark in zip(
-            base_x_short_wall_pos,
-            base_y_short_wall_pos,
-            base_angle_short_wall,
-            self.short_walls,
-        ):
-            x = base_x * cos_angle - base_y * sin_angle
-            y = base_x * sin_angle + base_y * cos_angle
-            angle = base_angle + scenario_angle
-
-            landmark.set_pos(torch.Tensor((x, y)), batch_index=env_index)
-            landmark.set_rot(angle, batch_index=env_index)
-
-        base_x_long_wall_pos = torch.tensor(
-            [
-                self.scenario_width / 2 + self.long_wall_length / 2,
-                self.scenario_width / 2,
-                -self.scenario_width / 2,
-                -self.scenario_width / 2 - self.long_wall_length / 2,
-                -self.scenario_width / 2 - self.long_wall_length / 2,
-                -self.scenario_width / 2,
-                self.scenario_width / 2,
-                self.scenario_width / 2 + self.long_wall_length / 2,
-            ],
-            dtype=torch.float32,
-            device=self.world.device,
-        )
-
-        base_y_long_wall_pos = torch.tensor(
-            [
-                self.scenario_width / 2,
-                self.scenario_width / 2 + self.long_wall_length / 2,
-                self.scenario_width / 2 + self.long_wall_length / 2,
-                self.scenario_width / 2,
-                -self.scenario_width / 2,
-                -self.scenario_width / 2 - self.long_wall_length / 2,
-                -self.scenario_width / 2 - self.long_wall_length / 2,
-                -self.scenario_width / 2,
-            ],
-            dtype=torch.float32,
-            device=self.world.device,
-        )
-
-        base_angle_long_wall = torch.tensor(
-            [
-                0, 
-                torch.pi / 2, 
-                torch.pi / 2, 
-                0, 
-                0, 
-                torch.pi / 2, 
-                torch.pi / 2, 
-                0
-            ],
-            dtype=torch.float32,
-            device=self.world.device,
-        )
-
-        for base_x, base_y, base_angle, landmark in zip(
-            base_x_long_wall_pos,
-            base_y_long_wall_pos,
-            base_angle_long_wall,
-            self.long_walls,
-        ):
-            x = base_x * cos_angle - base_y * sin_angle
-            y = base_x * sin_angle + base_y * cos_angle
-            angle = base_angle + scenario_angle
-
-            landmark.set_pos(torch.Tensor((x, y)), batch_index=env_index)
-            landmark.set_rot(angle, batch_index=env_index)
 
 
 if __name__ == "__main__":
