@@ -112,10 +112,10 @@ class Scenario(BaseScenario):
         controller_params = [2, 6, 0.002]
 
         # modified
-        self.n_tunnels = kwargs.get("n_tunnels", 5)
+        self.n_tunnels = kwargs.get("n_tunnels", 3)
         assert self.n_tunnels > 2, "minimum n_tunnels = 3"
 
-        self.n_agents = kwargs.get("n_agents", [2 for _ in range(self.n_tunnels)])
+        self.n_agents = kwargs.get("n_agents", [6 for _ in range(self.n_tunnels)])
         if isinstance(self.n_agents, int):
             self.n_agents = [self.n_agents for _ in range(self.n_tunnels)]
         elif not isinstance(self.n_agents, list) and len(self.n_agents) != self.n_tunnels:
@@ -187,8 +187,8 @@ class Scenario(BaseScenario):
         self.scenario_angle = kwargs.get("scenario_angle", 0)
         self.scenario_angle = torch.tensor(self.scenario_angle, dtype=torch.float32, device=device)
 
-        self.center_size_2 = self.scenario_width ** 2 / (2 * (1 - torch.cos(self.phi)))
-        self.center_size = torch.sqrt(self.center_size_2 - self.scenario_width ** 2 / 4)
+        self.center_radius_2 = self.scenario_width ** 2 / (2 * (1 - torch.cos(self.phi)))
+        self.center_size = torch.sqrt(self.center_radius_2 - self.scenario_width ** 2 / 4)
 
         self.spawn_map(world)
 
