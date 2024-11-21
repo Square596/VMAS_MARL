@@ -112,10 +112,10 @@ class Scenario(BaseScenario):
         controller_params = [2, 6, 0.002]
 
         # modified
-        self.n_tunnels = kwargs.get("n_tunnels", 3)
+        self.n_tunnels = kwargs.get("n_tunnels", 5)
         assert self.n_tunnels > 2, "minimum n_tunnels = 3"
 
-        self.n_agents = kwargs.get("n_agents", [6 for _ in range(self.n_tunnels)])
+        self.n_agents = kwargs.get("n_agents", list(range(self.n_tunnels)))
         if isinstance(self.n_agents, int):
             self.n_agents = [self.n_agents for _ in range(self.n_tunnels)]
         elif not isinstance(self.n_agents, list) and len(self.n_agents) != self.n_tunnels:
@@ -202,6 +202,9 @@ class Scenario(BaseScenario):
         self.short_walls = []
         for tunnel_id in range(self.n_tunnels):
             tunnel_length = self.tunnel_spaces[tunnel_id] + self.scenario_width * self.n_agents[tunnel_id]
+            tunnel_length_prev = self.tunnel_spaces[tunnel_id - 1] + self.scenario_width * self.n_agents[tunnel_id - 1]
+
+            tunnel_length = max(tunnel_length, tunnel_length_prev)
 
             # 2 long walls
             for wall_id in range(2):
@@ -227,9 +230,10 @@ class Scenario(BaseScenario):
             self.short_walls.append(short_wall)
 
     def reset_world_at(self, env_index: int = None):
+        flag = 0 
         for tunnel_id in range(self.n_tunnels):
             for agent_id in range(self.n_agents[tunnel_id]):
-                agent = self.world.agents[tunnel_id * self.n_agents[tunnel_id] + agent_id]
+                agent = self.world.agents[flag]
                 r_agent = self.tunnel_spaces[tunnel_id] + (agent_id + 1) * self.scenario_width - self.scenario_width + self.center_size
                 phi_agent = self.phis_tunnels[tunnel_id]
                 phi_agent_rotated = phi_agent + self.scenario_angle
@@ -243,6 +247,7 @@ class Scenario(BaseScenario):
 
                 x_goal, y_goal = polar2cartesian(r_goal, phi_goal_rotated)
                 agent.goal.set_pos(torch.Tensor((x_goal, y_goal)), batch_index=env_index)
+                flag += 1
 
         for agent in self.world.agents:
             if env_index is None:
@@ -274,6 +279,9 @@ class Scenario(BaseScenario):
             # 2 long walls
             for long_wall_id, landmark in enumerate(self.long_walls[tunnel_id]):
                 base_x = self.center_size + self.tunnel_spaces[tunnel_id] / 2 + self.n_agents[tunnel_id] * self.scenario_width / 2
+                base_x_prev = self.center_size + self.tunnel_spaces[tunnel_id - 1] / 2 + self.n_agents[tunnel_id - 1] * self.scenario_width / 2
+                base_x = max(base_x, base_x_prev)
+
                 base_y = self.scenario_width / 2 * (-1 if long_wall_id == 0 else 1)
                 angle = self.scenario_angle + self.phis_tunnels[tunnel_id]
 
@@ -284,6 +292,9 @@ class Scenario(BaseScenario):
             # 1 short wall
             landmark = self.short_walls[tunnel_id]
             base_x = self.center_size + self.tunnel_spaces[tunnel_id] + self.n_agents[tunnel_id] * self.scenario_width
+            base_x_prev = self.center_size + self.tunnel_spaces[tunnel_id - 1] + self.n_agents[tunnel_id - 1] * self.scenario_width
+            base_x = max(base_x, base_x_prev)
+
             base_y = 0
             angle = self.scenario_angle + self.phis_tunnels[tunnel_id]
 
