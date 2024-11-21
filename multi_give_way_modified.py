@@ -177,7 +177,7 @@ class Scenario(BaseScenario):
                 world.add_landmark(goal)
 
         # modification
-        self.tunnel_spaces = kwargs.get("center_lengths", [2 for _ in range(self.n_tunnels)])
+        self.tunnel_spaces = kwargs.get("tunnel_spaces", [2 for _ in range(self.n_tunnels)])
         if isinstance(self.tunnel_spaces, int):
             self.tunnel_spaces = [self.tunnel_spaces for _ in range(self.n_tunnels)]
         elif not isinstance(self.tunnel_spaces, list) and len(self.tunnel_spaces) != self.n_tunnels:
