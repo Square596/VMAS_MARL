@@ -1,9 +1,8 @@
 import typing
+from dataclasses import dataclass
 from typing import List
 
 import torch
-import torch.nn.functional as F
-
 from vmas import render_interactively
 from vmas.simulator.controllers.velocity_controller import VelocityController
 from vmas.simulator.core import Agent, Box, Landmark, Line, Sphere, World
@@ -13,11 +12,84 @@ from vmas.simulator.utils import Color, ScenarioUtils, TorchUtils
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
-import yaml
 
 
 def grid_pos2coords(grid_pos, scenario_width): 
     return (grid_pos + 1/2) * scenario_width
+
+
+@dataclass
+class MapRangeSettings:
+    width_min: int = 17
+    width_max: int = 21
+    height_min: int = 17
+    height_max: int = 21
+    obstacle_density_min: float = 0.1
+    obstacle_density_max: float = 0.3
+    num_agents_min: int = 5
+    num_agents_max: int = 10
+
+    def sample(self, seed=None, device="cpu"):
+        rng = torch.Generator(device)
+        if seed is not None:
+            rng = rng.manual_seed(seed)
+            
+        return {
+            "width": torch.randint(self.width_min, self.width_max + 1, size=tuple([], ), generator=rng),
+            "height": torch.randint(self.height_min, self.height_max + 1, size=tuple([], ), generator=rng),
+            "obstacle_density": (self.obstacle_density_max - self.obstacle_density_min) * torch.rand(size=tuple([], ), generator=rng) + self.obstacle_density_min,
+            "num_agents": torch.randint(self.num_agents_min, self.num_agents_max + 1, size=tuple([], ), generator=rng),
+            "seed": seed,
+            "device": device,
+        }
+
+
+def generate_map(settings):
+    seed = settings["seed"]
+    
+    rng = torch.Generator(settings["device"])
+    if seed is not None:
+        rng = rng.manual_seed(seed)
+
+    width, height, obstacle_density = settings["width"], settings["height"], settings["obstacle_density"]
+
+    obstacles_cfg = torch.full(size=(height, width), fill_value=-1)
+
+    total_tiles = width * height
+    total_obstacles = int(total_tiles * obstacle_density)
+
+    obstacles_placed = 0
+    while obstacles_placed < total_obstacles:
+        x = torch.randint(0, width, size=tuple([], ), generator=rng)
+        y = torch.randint(0, height, size=tuple([], ), generator=rng)
+        if obstacles_cfg[y][x] == -1:
+            obstacles_cfg[y][x] = 1
+            obstacles_placed += 1
+    
+    agents_cfg = torch.full(size=(height, width), fill_value=-1)
+    agents_placed = 0
+    while agents_placed < settings["num_agents"]:
+        x = torch.randint(0, width, size=tuple([], ), generator=rng)
+        y = torch.randint(0, height, size=tuple([], ), generator=rng)
+        if obstacles_cfg[y][x] == -1 and agents_cfg[y][x] == -1:
+            agents_cfg[y][x] = agents_placed
+            agents_placed += 1
+    
+    rewards_cfg = torch.full(size=(height, width), fill_value=-1)
+    rewards_placed = 0
+    while rewards_placed < settings["num_agents"]:
+        x = torch.randint(0, width, size=tuple([], ), generator=rng)
+        y = torch.randint(0, height, size=tuple([], ), generator=rng)
+        if obstacles_cfg[y][x] == -1 and agents_cfg[y][x] == -1 and rewards_cfg[y][x] == -1:
+            rewards_cfg[y][x] = rewards_placed
+            rewards_placed += 1
+
+    return {
+        "obstacles_cfg": obstacles_cfg,
+        "agents_cfg": agents_cfg,
+        "rewards_cfg": rewards_cfg,
+    }
+
 
 def str_cfg2num_cfg(str_cfg):
     cfg = list(str_cfg.values())[0]
@@ -25,6 +97,7 @@ def str_cfg2num_cfg(str_cfg):
 
     num_cfg = torch.tensor(eval(cfg_.replace('.', '-1, ').replace('#', '1, ')))
     return num_cfg
+
 
 class Scenario(BaseScenario):
     """
@@ -89,15 +162,39 @@ class Scenario(BaseScenario):
 
         controller_params = [2, 6, 0.002]
 
-        # modified
-        self.obstacles_cfg = kwargs.get("obstacles_cfg", None)
-        assert self.obstacles_cfg is not None
-        with open(self.obstacles_cfg, 'rb') as f:
-            self.obstacles_cfg = yaml.safe_load(f)
-        
-        self.obstacles_cfg = str_cfg2num_cfg(self.obstacles_cfg)
+        seed = kwargs.get("seed", None)
+        width_min = kwargs.get("width_min", 17)
+        width_max = kwargs.get("width_max", 21)
+        height_min = kwargs.get("height_min", 17)
+        height_max = kwargs.get("height_max", 21)
+        obstacle_density_min = kwargs.get("obstacle_density_min", 0.1)
+        obstacle_density_max = kwargs.get("obstacle_density_max", 0.3)
+        num_agents_min = kwargs.get("num_agents_min", 5)
+        num_agents_max = kwargs.get("num_agents_max", 10)
+        settings = MapRangeSettings(
+            width_min, 
+            width_max, 
+            height_min, 
+            height_max, 
+            obstacle_density_min, 
+            obstacle_density_max, 
+            num_agents_min, 
+            num_agents_max
+        ).sample(seed, device)
 
-        self.obstacles_cfg = F.pad(self.obstacles_cfg, (1, 1, 1, 1), value=1)
+        cfg = generate_map(settings)
+
+        self.obstacles_cfg = cfg["obstacles_cfg"]
+
+        # modified
+        # self.obstacles_cfg = kwargs.get("obstacles_cfg", None)
+        # assert self.obstacles_cfg is not None
+        # with open(self.obstacles_cfg, 'rb') as f:
+        #     self.obstacles_cfg = yaml.safe_load(f)
+        
+        # self.obstacles_cfg = str_cfg2num_cfg(self.obstacles_cfg)
+
+        # self.obstacles_cfg = F.pad(self.obstacles_cfg, (1, 1, 1, 1), value=1)
 
         self.obstacles_grid_positions = torch.nonzero(self.obstacles_cfg == 1)
         assert self.obstacles_grid_positions.shape[1] == 2
@@ -108,19 +205,21 @@ class Scenario(BaseScenario):
 
         self.num_obstacles = self.obstacles_grid_positions.shape[0]
 
-        self.agents_cfg = kwargs.get("agents_cfg", torch.zeros(self.num_rows - 2, self.num_cols - 2, dtype=torch.int8, device=device) - 1)
-        self.agents_cfg[0, 3] = 0 # TODO
-        self.agents_cfg[-1, 3] = 1 # TODO
-        self.agents_cfg = F.pad(self.agents_cfg, (1, 1, 1, 1), value=-1)
+        self.agents_cfg = cfg["agents_cfg"]
+        # self.agents_cfg = kwargs.get("agents_cfg", torch.zeros(self.num_rows, self.num_cols, dtype=torch.int8, device=device) - 1)
+        # self.agents_cfg[0, 3] = 0 # TODO
+        # self.agents_cfg[-1, 3] = 1 # TODO
+        # self.agents_cfg = F.pad(self.agents_cfg, (1, 1, 1, 1), value=-1)
 
         self.num_agents = torch.max(self.agents_cfg) + 1
 
         assert self.agents_cfg.unique().shape[0] == self.num_agents + 1
 
-        self.rewards_cfg = kwargs.get("rewards_cfg", torch.zeros(self.num_rows - 2, self.num_cols - 2, dtype=torch.int8, device=device) - 1)
-        self.rewards_cfg[-1, -3] = 0 # TODO
-        self.rewards_cfg[0, -3] = 1 # TODO
-        self.rewards_cfg = F.pad(self.rewards_cfg, (1, 1, 1, 1), value=-1)
+        self.rewards_cfg = cfg["rewards_cfg"]
+        # self.rewards_cfg = kwargs.get("rewards_cfg", torch.zeros(self.num_rows, self.num_cols, dtype=torch.int8, device=device) - 1)
+        # self.rewards_cfg[-1, -3] = 0 # TODO
+        # self.rewards_cfg[0, -3] = 1 # TODO
+        # self.rewards_cfg = F.pad(self.rewards_cfg, (1, 1, 1, 1), value=-1)
 
         num_rewards = self.rewards_cfg.max() + 1
 
@@ -145,6 +244,10 @@ class Scenario(BaseScenario):
         self.agent_box_length = 0.32
         self.agent_box_width = 0.24
         self.scenario_width = 0.4
+
+        center_x = self.num_rows * self.scenario_width / 2
+        center_y = self.num_cols * self.scenario_width / 2
+        self.center_coords = torch.Tensor([center_x, center_y], device=device)
 
         self.min_collision_distance = 0.005
 
@@ -200,18 +303,42 @@ class Scenario(BaseScenario):
             world.add_landmark(obstacle)
             self.obstacles.append(obstacle)
 
+        self.vwalls = []
+        for vwall_id in range(2):
+            vwall = Landmark(
+                name=f"vwall{vwall_id}",
+                collide=True,
+                shape=Line(length=self.scenario_width * self.num_cols),
+                color=Color.BLACK,
+            )
+
+            world.add_landmark(vwall)
+            self.vwalls.append(vwall)
+        
+        self.hwalls = []
+        for hwall_id in range(2):
+            hwall = Landmark(
+                name=f"hwall{hwall_id}",
+                collide=True,
+                shape=Line(length=self.scenario_width * self.num_rows),
+                color=Color.BLACK,
+            )
+
+            world.add_landmark(hwall)
+            self.hwalls.append(hwall)
+
     def reset_world_at(self, env_index: int = None):
         for agent_id in range(self.num_agents):
             agent = self.world.agents[agent_id]
             agent_pos_mask = self.agents_cfg == agent_id
             agent_grid_pos = torch.hstack([self._rows[agent_pos_mask], self._cols[agent_pos_mask]])
             agent_coords = grid_pos2coords(agent_grid_pos, self.scenario_width)
-            agent.set_pos(agent_coords, batch_index=env_index)
+            agent.set_pos(agent_coords - self.center_coords, batch_index=env_index)
 
             reward_pos_mask = self.rewards_cfg == agent_id
             reward_grid_pos = torch.hstack([self._rows[reward_pos_mask], self._cols[reward_pos_mask]])
             reward_coords = grid_pos2coords(reward_grid_pos, self.scenario_width)
-            agent.goal.set_pos(reward_coords, batch_index=env_index)
+            agent.goal.set_pos(reward_coords - self.center_coords, batch_index=env_index)
 
         for agent in self.world.agents:
             if env_index is None:
@@ -242,7 +369,27 @@ class Scenario(BaseScenario):
         for obstacle_id, obstacle_grid_pos in enumerate(self.obstacles_grid_positions):
             landmark = self.obstacles[obstacle_id]
             obstacle_coords = grid_pos2coords(obstacle_grid_pos, self.scenario_width)
-            landmark.set_pos(obstacle_coords, batch_index=env_index)
+            landmark.set_pos(obstacle_coords - self.center_coords, batch_index=env_index)
+        
+        # vwall0
+        vwall0_pos = torch.Tensor([0, self.num_cols * self.scenario_width / 2], device=self.world.device)
+        self.vwalls[0].set_pos(vwall0_pos - self.center_coords, batch_index=env_index)
+        self.vwalls[0].set_rot(torch.Tensor([torch.pi / 2]), batch_index=env_index)
+        
+
+        # vwall1
+        vwall1_pos = torch.Tensor([self.num_rows * self.scenario_width, self.num_cols * self.scenario_width / 2], device=self.world.device)
+        self.vwalls[1].set_pos(vwall1_pos - self.center_coords, batch_index=env_index)
+        self.vwalls[1].set_rot(torch.Tensor([torch.pi / 2]), batch_index=env_index)
+
+        # hwall0
+        hwall0_pos = torch.Tensor([self.num_rows * self.scenario_width / 2, 0], device=self.world.device)
+        self.hwalls[0].set_pos(hwall0_pos - self.center_coords, batch_index=env_index)
+        
+        # hwall1
+        hwall1_pos = torch.Tensor([self.num_rows * self.scenario_width / 2, self.num_cols * self.scenario_width], device=self.world.device)
+        self.hwalls[1].set_pos(hwall1_pos - self.center_coords, batch_index=env_index)
+        
 
     def process_action(self, agent: Agent):
         # Clamp square to circle
@@ -368,27 +515,20 @@ class Scenario(BaseScenario):
         geoms: List[Geom] = []
 
         # Communication lines
-        for i, agent1 in enumerate(self.world.agents):
-            for j, agent2 in enumerate(self.world.agents):
-                if j <= i:
-                    continue
-                agent_dist = torch.linalg.vector_norm(
-                    agent1.state.pos - agent2.state.pos, dim=-1
-                )
-                if agent_dist[env_index] <= self.comms_range:
-                    color = Color.BLACK.value
-                    line = rendering.Line(
-                        (agent1.state.pos[env_index]),
-                        (agent2.state.pos[env_index]),
-                        width=1,
-                    )
-                    xform = rendering.Transform()
-                    line.add_attr(xform)
-                    line.set_color(*color)
-                    geoms.append(line)
+        for agent in self.world.agents:
+            color = Color.BLACK.value
+            line = rendering.Line(
+                (agent.state.pos[env_index]),
+                (agent.goal.state.pos[env_index]),
+                width=1,
+            )
+            xform = rendering.Transform()
+            line.add_attr(xform)
+            line.set_color(*color)
+            geoms.append(line)
 
         return geoms
 
 
 if __name__ == "__main__":
-    render_interactively(Scenario(), control_two_agents=True, obstacles_cfg='validation-random.yaml')
+    render_interactively(Scenario(), control_two_agents=True)
