@@ -35,10 +35,10 @@ class MapRangeSettings:
             rng = rng.manual_seed(seed)
             
         return {
-            "width": torch.randint(self.width_min, self.width_max + 1, size=tuple([], ), generator=rng),
-            "height": torch.randint(self.height_min, self.height_max + 1, size=tuple([], ), generator=rng),
-            "obstacle_density": (self.obstacle_density_max - self.obstacle_density_min) * torch.rand(size=tuple([], ), generator=rng) + self.obstacle_density_min,
-            "num_agents": torch.randint(self.num_agents_min, self.num_agents_max + 1, size=tuple([], ), generator=rng),
+            "width": torch.randint(self.width_min, self.width_max + 1, size=tuple([], ), generator=rng, device=device),
+            "height": torch.randint(self.height_min, self.height_max + 1, size=tuple([], ), generator=rng, device=device),
+            "obstacle_density": (self.obstacle_density_max - self.obstacle_density_min) * torch.rand(size=tuple([], ), generator=rng, device=device) + self.obstacle_density_min,
+            "num_agents": torch.randint(self.num_agents_min, self.num_agents_max + 1, size=tuple([], ), generator=rng, device=device),
             "seed": seed,
             "device": device,
         }
@@ -46,40 +46,40 @@ class MapRangeSettings:
 
 def generate_map(settings):
     seed = settings["seed"]
-    
-    rng = torch.Generator(settings["device"])
+    device = settings["device"]
+    rng = torch.Generator(device)
     if seed is not None:
         rng = rng.manual_seed(seed)
 
     width, height, obstacle_density = settings["width"], settings["height"], settings["obstacle_density"]
 
-    obstacles_cfg = torch.full(size=(height, width), fill_value=-1)
+    obstacles_cfg = torch.full(size=(height, width), fill_value=-1, device=device)
 
     total_tiles = width * height
     total_obstacles = int(total_tiles * obstacle_density)
 
     obstacles_placed = 0
     while obstacles_placed < total_obstacles:
-        x = torch.randint(0, width, size=tuple([], ), generator=rng)
-        y = torch.randint(0, height, size=tuple([], ), generator=rng)
+        x = torch.randint(0, width, size=tuple([], ), generator=rng, device=device)
+        y = torch.randint(0, height, size=tuple([], ), generator=rng, device=device)
         if obstacles_cfg[y][x] == -1:
             obstacles_cfg[y][x] = 1
             obstacles_placed += 1
     
-    agents_cfg = torch.full(size=(height, width), fill_value=-1)
+    agents_cfg = torch.full(size=(height, width), fill_value=-1, device=device)
     agents_placed = 0
     while agents_placed < settings["num_agents"]:
-        x = torch.randint(0, width, size=tuple([], ), generator=rng)
-        y = torch.randint(0, height, size=tuple([], ), generator=rng)
+        x = torch.randint(0, width, size=tuple([], ), generator=rng, device=device)
+        y = torch.randint(0, height, size=tuple([], ), generator=rng, device=device)
         if obstacles_cfg[y][x] == -1 and agents_cfg[y][x] == -1:
             agents_cfg[y][x] = agents_placed
             agents_placed += 1
     
-    rewards_cfg = torch.full(size=(height, width), fill_value=-1)
+    rewards_cfg = torch.full(size=(height, width), fill_value=-1, device=device)
     rewards_placed = 0
     while rewards_placed < settings["num_agents"]:
-        x = torch.randint(0, width, size=tuple([], ), generator=rng)
-        y = torch.randint(0, height, size=tuple([], ), generator=rng)
+        x = torch.randint(0, width, size=tuple([], ), generator=rng, device=device)
+        y = torch.randint(0, height, size=tuple([], ), generator=rng, device=device)
         if obstacles_cfg[y][x] == -1 and agents_cfg[y][x] == -1 and rewards_cfg[y][x] == -1:
             rewards_cfg[y][x] = rewards_placed
             rewards_placed += 1
@@ -247,7 +247,7 @@ class Scenario(BaseScenario):
 
         center_x = self.num_rows * self.scenario_width / 2
         center_y = self.num_cols * self.scenario_width / 2
-        self.center_coords = torch.Tensor([center_x, center_y], device=device)
+        self.center_coords = torch.tensor([center_x, center_y], device=device)
 
         self.min_collision_distance = 0.005
 
@@ -372,22 +372,22 @@ class Scenario(BaseScenario):
             landmark.set_pos(obstacle_coords - self.center_coords, batch_index=env_index)
         
         # vwall0
-        vwall0_pos = torch.Tensor([0, self.num_cols * self.scenario_width / 2], device=self.world.device)
+        vwall0_pos = torch.tensor([0, self.num_cols * self.scenario_width / 2], device=self.world.device)
         self.vwalls[0].set_pos(vwall0_pos - self.center_coords, batch_index=env_index)
-        self.vwalls[0].set_rot(torch.Tensor([torch.pi / 2]), batch_index=env_index)
+        self.vwalls[0].set_rot(torch.tensor([torch.pi / 2]), batch_index=env_index)
         
 
         # vwall1
-        vwall1_pos = torch.Tensor([self.num_rows * self.scenario_width, self.num_cols * self.scenario_width / 2], device=self.world.device)
+        vwall1_pos = torch.tensor([self.num_rows * self.scenario_width, self.num_cols * self.scenario_width / 2], device=self.world.device)
         self.vwalls[1].set_pos(vwall1_pos - self.center_coords, batch_index=env_index)
-        self.vwalls[1].set_rot(torch.Tensor([torch.pi / 2]), batch_index=env_index)
+        self.vwalls[1].set_rot(torch.tensor([torch.pi / 2]), batch_index=env_index)
 
         # hwall0
-        hwall0_pos = torch.Tensor([self.num_rows * self.scenario_width / 2, 0], device=self.world.device)
+        hwall0_pos = torch.tensor([self.num_rows * self.scenario_width / 2, 0], device=self.world.device)
         self.hwalls[0].set_pos(hwall0_pos - self.center_coords, batch_index=env_index)
         
         # hwall1
-        hwall1_pos = torch.Tensor([self.num_rows * self.scenario_width / 2, self.num_cols * self.scenario_width], device=self.world.device)
+        hwall1_pos = torch.tensor([self.num_rows * self.scenario_width / 2, self.num_cols * self.scenario_width], device=self.world.device)
         self.hwalls[1].set_pos(hwall1_pos - self.center_coords, batch_index=env_index)
         
 
