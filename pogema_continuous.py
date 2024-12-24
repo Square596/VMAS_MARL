@@ -66,11 +66,14 @@ def generate_map(settings):
             obstacles_cfg[y][x] = 1
             obstacles_placed += 1
     
+    agents_rng = torch.Generator(device)
+    agents_rng = agents_rng.manual_seed(torch.randint(0, 1000, tuple([], ), device=device).item())
+    
     agents_cfg = torch.full(size=(height, width), fill_value=-1, device=device)
     agents_placed = 0
     while agents_placed < settings["num_agents"]:
-        x = torch.randint(0, width, size=tuple([], ), generator=rng, device=device)
-        y = torch.randint(0, height, size=tuple([], ), generator=rng, device=device)
+        x = torch.randint(0, width, size=tuple([], ), generator=agents_rng, device=device)
+        y = torch.randint(0, height, size=tuple([], ), generator=agents_rng, device=device)
         if obstacles_cfg[y][x] == -1 and agents_cfg[y][x] == -1:
             agents_cfg[y][x] = agents_placed
             agents_placed += 1
@@ -78,8 +81,8 @@ def generate_map(settings):
     rewards_cfg = torch.full(size=(height, width), fill_value=-1, device=device)
     rewards_placed = 0
     while rewards_placed < settings["num_agents"]:
-        x = torch.randint(0, width, size=tuple([], ), generator=rng, device=device)
-        y = torch.randint(0, height, size=tuple([], ), generator=rng, device=device)
+        x = torch.randint(0, width, size=tuple([], ), generator=agents_rng, device=device)
+        y = torch.randint(0, height, size=tuple([], ), generator=agents_rng, device=device)
         if obstacles_cfg[y][x] == -1 and agents_cfg[y][x] == -1 and rewards_cfg[y][x] == -1:
             rewards_cfg[y][x] = rewards_placed
             rewards_placed += 1
@@ -531,4 +534,4 @@ class Scenario(BaseScenario):
 
 
 if __name__ == "__main__":
-    render_interactively(Scenario(), control_two_agents=True)
+    render_interactively(Scenario(), control_two_agents=True, num_agents_min=2, num_agents_max=2)
